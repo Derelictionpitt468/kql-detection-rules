@@ -1,0 +1,61 @@
+// ============================================================
+// Rule ID     : IA-003
+// Name        : Anomalous Sign-in After Long Inactivity
+// MITRE Tactic: Initial Access
+// MITRE Tech  : T1078 — Valid Accounts
+// Data Source : SigninLogs (Entra ID)
+// Severity    : MEDIUM
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects accounts that have been dormant for an extended period
+//   and suddenly authenticate. Dormant accounts are frequently
+//   targeted because they are less likely to have active MFA,
+//   updated passwords, or monitoring. Common in offboarding gaps.
+//
+// False Positives:
+//   - Contractor or seasonal accounts reactivated legitimately
+//   - Service accounts used infrequently by design
+//   - Shared accounts accessed rarely
+//
+// Tuning Notes:
+//   - InactivityThreshold: accounts silent for this many days
+//   - Consider cross-referencing with HR data to identify
+//     accounts belonging to former employees
+//   - Service accounts can be excluded by UPN suffix or group
+// ============================================================
+
+let InactivityThreshold = 90d;
+let DetectionWindow     = 1d;
+
+let LastSeenBefore =
+    SigninLogs
+    | where TimeGenerated between (ago(InactivityThreshold + DetectionWindow) .. ago(DetectionWindow))
+    | where ResultType == "0"
+    | summarize LastActiveDate = max(TimeGenerated) by UserPrincipalName;
+
+let RecentSignins =
+    SigninLogs
+    | where TimeGenerated >= ago(DetectionWindow)
+    | where ResultType == "0"
+    | project
+        TimeGenerated,
+        UserPrincipalName,
+        IPAddress,
+        Location,
+        AppDisplayName;
+
+RecentSignins
+| join kind=inner LastSeenBefore on UserPrincipalName
+| extend DaysSinceLastActive = datetime_diff("day", TimeGenerated, LastActiveDate)
+| where DaysSinceLastActive >= 90
+| project
+    TimeGenerated,
+    UserPrincipalName,
+    IPAddress,
+    Location,
+    AppDisplayName,
+    LastActiveDate,
+    DaysSinceLastActive
+| order by DaysSinceLastActive desc

@@ -1,0 +1,58 @@
+// ============================================================
+// Rule ID     : EX-002
+// Name        : Bulk Storage Read Operations
+// MITRE Tactic: Exfiltration
+// MITRE Tech  : T1530 — Data from Cloud Storage Object
+// Data Source : StorageBlobLogs
+// Severity    : MEDIUM
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects a high volume of blob read operations from a single
+//   caller in a short time window, regardless of total data size.
+//   Complements EX-001 — an attacker reading many small files
+//   (e.g., config files, credentials, source code) would trigger
+//   this rule but not EX-001.
+//
+// False Positives:
+//   - CDN or search indexers reading blobs
+//   - Application caches warming up
+//   - Legitimate data processing pipelines
+//
+// Tuning Notes:
+//   - ReadCountThreshold: tune based on your application's
+//     normal blob read patterns
+//   - Consider filtering to container names that hold sensitive
+//     data (config, secrets, backups)
+//   - DistinctBlobs is often more meaningful than ReadCount —
+//     many reads of the same blob is less suspicious
+// ============================================================
+
+let ReadCountThreshold = 500;
+let TimeWindow         = 10m;
+
+StorageBlobLogs
+| where TimeGenerated >= ago(1d)
+| where OperationName == "GetBlob"
+| summarize
+    ReadCount         = count(),
+    DistinctBlobs     = dcount(ObjectKey),
+    TotalBytesRead    = sum(ResponseBodySize),
+    ContainerList     = make_set(split(ObjectKey, "/")[0], 10),
+    FirstRead         = min(TimeGenerated),
+    LastRead          = max(TimeGenerated)
+    by CallerIpAddress, AccountName, bin(TimeGenerated, TimeWindow)
+| where ReadCount >= ReadCountThreshold
+| extend TotalMB = round(TotalBytesRead / 1048576.0, 2)
+| project
+    TimeWindow        = TimeGenerated,
+    AccountName,
+    CallerIpAddress,
+    ReadCount,
+    DistinctBlobs,
+    TotalMB,
+    ContainerList,
+    FirstRead,
+    LastRead
+| order by ReadCount desc

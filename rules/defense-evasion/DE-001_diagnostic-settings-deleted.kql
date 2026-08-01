@@ -1,0 +1,41 @@
+// ============================================================
+// Rule ID     : DE-001
+// Name        : Diagnostic Settings Deleted
+// MITRE Tactic: Defense Evasion
+// MITRE Tech  : T1562.008 — Impair Defenses: Disable Cloud Logs
+// Data Source : AzureActivity
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when diagnostic settings are deleted on Azure resources.
+//   Diagnostic settings control where audit logs, metrics, and
+//   activity data are sent. An attacker who deletes diagnostic
+//   settings is attempting to cut off the forensic trail before
+//   or during an attack, operating in a blind spot.
+//
+// False Positives:
+//   - Infrastructure cleanup / decommissioning
+//   - Log destination migration (delete old, create new)
+//
+// Tuning Notes:
+//   - This should be extremely rare in production — any deletion
+//     outside a change window warrants immediate investigation
+//   - If deletion is immediately followed by a new creation
+//     (same resource), it may be a reconfiguration — check the
+//     caller and new destination
+// ============================================================
+
+AzureActivity
+| where TimeGenerated >= ago(1d)
+| where OperationNameValue == "MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/DELETE"
+| where ActivityStatusValue == "Success"
+| project
+    TimeGenerated,
+    Caller,
+    ResourceGroup,
+    Resource,
+    SubscriptionId,
+    CorrelationId
+| order by TimeGenerated desc

@@ -1,0 +1,54 @@
+// ============================================================
+// Rule ID     : DE-002
+// Name        : Azure Policy Deleted or Disabled
+// MITRE Tactic: Defense Evasion
+// MITRE Tech  : T1562 — Impair Defenses
+// Data Source : AzureActivity
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects deletion or modification of Azure Policy assignments
+//   and definitions. Azure Policy enforces security guardrails
+//   (e.g., require encryption, deny public IPs, enforce tagging).
+//   An attacker removing policies is creating space to deploy
+//   resources that would otherwise be blocked.
+//
+// False Positives:
+//   - Legitimate policy refactoring or environment cleanup
+//   - Policy assignment deleted as part of subscription move
+//
+// Tuning Notes:
+//   - Deletion is always higher severity than modification
+//   - Focus on policies related to security (encryption, network
+//     access, MFA) rather than operational policies (tagging, naming)
+//   - Cross-correlate with resource creation events shortly after
+//     the deletion to see what the attacker was trying to deploy
+// ============================================================
+
+AzureActivity
+| where TimeGenerated >= ago(1d)
+| where OperationNameValue in (
+    "MICROSOFT.AUTHORIZATION/POLICYASSIGNMENTS/DELETE",
+    "MICROSOFT.AUTHORIZATION/POLICYDEFINITIONS/DELETE",
+    "MICROSOFT.AUTHORIZATION/POLICYSETDEFINITIONS/DELETE"
+  )
+  or (
+    OperationNameValue in (
+        "MICROSOFT.AUTHORIZATION/POLICYASSIGNMENTS/WRITE",
+        "MICROSOFT.AUTHORIZATION/POLICYDEFINITIONS/WRITE"
+    )
+    and Properties contains '"enforcementMode":"DoNotEnforce"'
+  )
+| where ActivityStatusValue == "Success"
+| project
+    TimeGenerated,
+    Caller,
+    OperationNameValue,
+    ResourceGroup,
+    Resource,
+    SubscriptionId,
+    Properties,
+    CorrelationId
+| order by TimeGenerated desc

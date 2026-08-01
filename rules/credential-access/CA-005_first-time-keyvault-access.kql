@@ -1,0 +1,70 @@
+// ============================================================
+// Rule ID     : CA-005
+// Name        : First-Time Key Vault Secret Access
+// MITRE Tactic: Credential Access
+// MITRE Tech  : T1555 — Credentials from Password Stores
+// Data Source : AzureDiagnostics (Key Vault audit logs)
+// Severity    : MEDIUM
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a user or service principal accesses a Key Vault
+//   secret, key, or certificate for the first time. First-time
+//   access to secrets is a strong signal of credential harvesting,
+//   particularly when the caller has not historically accessed
+//   that vault or secret.
+//
+// Prerequisites:
+//   Key Vault diagnostic logging must be enabled and directed to
+//   a Log Analytics workspace (AuditEvent category).
+//
+// False Positives:
+//   - New employee or service principal legitimately onboarding
+//   - Rotation scripts accessing secrets for the first time
+//   - New application deployments accessing required secrets
+//
+// Tuning Notes:
+//   - Extend the LookbackDays to establish a longer baseline
+//   - Scope to high-sensitivity vaults using VaultName filter
+//   - Cross-correlate with AZ-008 from the auditor — if the vault
+//     has no firewall and this is a first access, investigate immediately
+// ============================================================
+
+let LookbackDays  = 30d;
+let DetectionWindow = 1d;
+
+let HistoricalAccess =
+    AzureDiagnostics
+    | where TimeGenerated between (ago(LookbackDays) .. ago(DetectionWindow))
+    | where ResourceType == "VAULTS"
+    | where OperationName in ("SecretGet", "KeyGet", "CertificateGet")
+    | where ResultType == "Success"
+    | project CallerIPAddress, identity_claim_upn_s, ResourceId;
+
+let RecentAccess =
+    AzureDiagnostics
+    | where TimeGenerated >= ago(DetectionWindow)
+    | where ResourceType == "VAULTS"
+    | where OperationName in ("SecretGet", "KeyGet", "CertificateGet")
+    | where ResultType == "Success"
+    | project
+        TimeGenerated,
+        CallerIPAddress,
+        Caller            = identity_claim_upn_s,
+        VaultName         = ResourceId,
+        OperationName,
+        requestUri_s;
+
+RecentAccess
+| join kind=leftanti HistoricalAccess
+    on $left.Caller == $right.identity_claim_upn_s,
+       $left.VaultName == $right.ResourceId
+| project
+    TimeGenerated,
+    Caller,
+    VaultName,
+    OperationName,
+    CallerIPAddress,
+    SecretURI         = requestUri_s
+| order by TimeGenerated desc

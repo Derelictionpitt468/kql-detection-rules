@@ -1,0 +1,58 @@
+// ============================================================
+// Rule ID     : DE-003
+// Name        : Conditional Access Policy Modified or Deleted
+// MITRE Tactic: Defense Evasion
+// MITRE Tech  : T1562.006 — Impair Defenses: Indicator Blocking
+// Data Source : AuditLogs (Entra ID)
+// Severity    : CRITICAL
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects changes to Conditional Access (CA) policies including
+//   deletion, disabling, or modification of existing policies.
+//   CA policies are the primary enforcement layer for MFA, device
+//   compliance, and location-based access control in Entra ID.
+//   An attacker with Global Admin or Conditional Access Admin
+//   permissions who removes or weakens a CA policy can then
+//   authenticate without MFA from any location or device.
+//
+// False Positives:
+//   - Legitimate CA policy updates by security team
+//   - Policy migrations or restructuring
+//
+// Tuning Notes:
+//   - ANY deletion should be treated as CRITICAL immediately
+//   - Modifications: compare OldValue vs NewValue in the audit log
+//     to determine if the change weakened or strengthened the policy
+//   - Correlate with the modifying user's own sign-in activity —
+//     if they signed in from an unusual location before this change,
+//     their account may be the compromised one
+// ============================================================
+
+AuditLogs
+| where TimeGenerated >= ago(1d)
+| where OperationName in (
+    "Delete conditional access policy",
+    "Update conditional access policy",
+    "Add conditional access policy"
+  )
+| extend
+    PolicyName        = tostring(TargetResources[0].displayName),
+    PolicyId          = tostring(TargetResources[0].id),
+    ModifiedBy        = tostring(InitiatedBy.user.userPrincipalName),
+    ModifiedProps     = tostring(TargetResources[0].modifiedProperties)
+| extend
+    OldState          = extract('"state","oldValue":"([^"]+)"', 1, ModifiedProps),
+    NewState          = extract('"state","newValue":"([^"]+)"', 1, ModifiedProps)
+| project
+    TimeGenerated,
+    OperationName,
+    PolicyName,
+    PolicyId,
+    ModifiedBy,
+    OldState,
+    NewState,
+    Result,
+    CorrelationId
+| order by TimeGenerated desc

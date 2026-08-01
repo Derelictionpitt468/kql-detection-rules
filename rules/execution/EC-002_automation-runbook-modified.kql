@@ -1,0 +1,53 @@
+// ============================================================
+// Rule ID     : EC-002
+// Name        : Azure Automation Runbook Created or Modified
+// MITRE Tactic: Execution / Persistence
+// MITRE Tech  : T1059 — Command and Scripting Interpreter
+// Data Source : AzureActivity
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects creation or modification of Azure Automation Runbooks.
+//   Runbooks are PowerShell or Python scripts that run on a
+//   schedule or on-demand within an Automation Account, often
+//   with a managed identity or Run As account that has elevated
+//   Azure permissions. Attackers who gain access to an Automation
+//   Account can create or modify runbooks to execute arbitrary
+//   code persistently in the environment — surviving VM reboots
+//   and even subscription-level changes.
+//
+// False Positives:
+//   - Legitimate operational runbooks being created or updated
+//   - DevOps pipelines deploying automation scripts
+//
+// Tuning Notes:
+//   - Focus on runbooks created by users rather than service principals
+//   - Runbook modifications made outside business hours are higher risk
+//   - Cross-correlate the Automation Account's managed identity RBAC
+//     role — if it has Owner or Contributor, runbook execution has
+//     full subscription access
+// ============================================================
+
+AzureActivity
+| where TimeGenerated >= ago(1d)
+| where OperationNameValue in (
+    "MICROSOFT.AUTOMATION/AUTOMATIONACCOUNTS/RUNBOOKS/WRITE",
+    "MICROSOFT.AUTOMATION/AUTOMATIONACCOUNTS/RUNBOOKS/PUBLISH/ACTION",
+    "MICROSOFT.AUTOMATION/AUTOMATIONACCOUNTS/JOBS/WRITE"
+  )
+| where ActivityStatusValue == "Success"
+| extend
+    AutomationAccount = tostring(split(ResourceId, "/")[-3]),
+    RunbookName       = tostring(split(ResourceId, "/")[-1])
+| project
+    TimeGenerated,
+    Caller,
+    OperationNameValue,
+    AutomationAccount,
+    RunbookName,
+    ResourceGroup,
+    SubscriptionId,
+    CorrelationId
+| order by TimeGenerated desc

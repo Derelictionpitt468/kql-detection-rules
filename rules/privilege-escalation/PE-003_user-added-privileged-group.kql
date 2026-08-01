@@ -1,0 +1,57 @@
+// ============================================================
+// Rule ID     : PE-003
+// Name        : User Added to Privileged Entra ID Group
+// MITRE Tactic: Privilege Escalation
+// MITRE Tech  : T1098 — Account Manipulation
+// Data Source : AuditLogs (Entra ID)
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a user account is added to a group that confers
+//   elevated privileges in Entra ID or Azure. Attackers who gain
+//   initial access will often add themselves or a controlled account
+//   to privileged groups to maintain elevated access.
+//
+// False Positives:
+//   - Legitimate HR-driven group membership changes
+//   - Onboarding automation adding users to role groups
+//
+// Tuning Notes:
+//   - PrivilegedGroupKeywords: add group name patterns specific
+//     to your organisation's privileged group naming convention
+//   - Consider alerting on ALL group additions and filtering
+//     by group rather than keywords for higher coverage
+//   - Cross-correlate with PE-001 to detect combined escalation
+// ============================================================
+
+let PrivilegedGroupKeywords = dynamic([
+    "admin",
+    "administrator",
+    "global",
+    "privileged",
+    "security",
+    "owner",
+    "contributor",
+    "helpdesk",
+    "service desk"
+]);
+
+AuditLogs
+| where TimeGenerated >= ago(1d)
+| where OperationName == "Add member to group"
+| where Result == "success"
+| extend
+    AddedUser         = tostring(TargetResources[0].userPrincipalName),
+    GroupName         = tostring(TargetResources[1].displayName),
+    AddedBy           = tostring(InitiatedBy.user.userPrincipalName)
+| where GroupName has_any (PrivilegedGroupKeywords)
+| project
+    TimeGenerated,
+    AddedUser,
+    GroupName,
+    AddedBy,
+    Result,
+    CorrelationId
+| order by TimeGenerated desc

@@ -1,0 +1,58 @@
+// ============================================================
+// Rule ID     : CA-001
+// Name        : Brute Force Sign-in Failures
+// MITRE Tactic: Credential Access
+// MITRE Tech  : T1110.001 — Brute Force: Password Guessing
+// Data Source : SigninLogs (Entra ID)
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects a high volume of failed sign-in attempts against a
+//   single account within a short time window. Indicative of an
+//   automated brute force or credential stuffing attack.
+//
+// False Positives:
+//   - Users repeatedly mistyping their password
+//   - Misconfigured applications with stale credentials
+//   - Password expiry causing repeated auth failures
+//
+// Tuning Notes:
+//   - Adjust the threshold (default: 10 failures in 10 minutes)
+//     based on your organisation's baseline sign-in failure rate
+//   - Exclude known service accounts if they generate noise
+//   - Consider narrowing to specific ResultType codes:
+//       50126 = invalid credentials
+//       50053 = account locked
+//       50055 = password expired
+// ============================================================
+
+let Threshold = 10;
+let TimeWindow = 10m;
+
+SigninLogs
+| where TimeGenerated >= ago(1h)
+| where ResultType != "0"                          // exclude successful sign-ins
+| where ResultType in ("50126", "50053", "50055", "50074", "50076")
+| summarize
+    FailureCount     = count(),
+    FirstAttempt     = min(TimeGenerated),
+    LastAttempt      = max(TimeGenerated),
+    DistinctIPs      = dcount(IPAddress),
+    IPList           = make_set(IPAddress, 10),
+    AppList          = make_set(AppDisplayName, 5),
+    ResultTypes      = make_set(ResultType, 5)
+    by UserPrincipalName, bin(TimeGenerated, TimeWindow)
+| where FailureCount >= Threshold
+| project
+    TimeWindow        = TimeGenerated,
+    UserPrincipalName,
+    FailureCount,
+    DistinctIPs,
+    IPList,
+    AppList,
+    ResultTypes,
+    FirstAttempt,
+    LastAttempt
+| order by FailureCount desc

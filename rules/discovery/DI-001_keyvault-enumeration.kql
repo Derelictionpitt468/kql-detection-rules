@@ -1,0 +1,58 @@
+// ============================================================
+// Rule ID     : DI-001
+// Name        : Key Vault Enumeration
+// MITRE Tactic: Discovery
+// MITRE Tech  : T1580 — Cloud Infrastructure Discovery
+// Data Source : AzureDiagnostics (Key Vault)
+// Severity    : MEDIUM
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects systematic enumeration of Key Vault contents — a caller
+//   listing secrets, keys, or certificates within a vault rather than
+//   accessing a specific known item. Listing operations are the
+//   recon step before targeted secret access. An attacker who has
+//   obtained Key Vault access will typically list contents first
+//   to understand what is available.
+//
+// Prerequisites:
+//   Key Vault diagnostic logging enabled with AuditEvent category.
+//
+// False Positives:
+//   - Automation scripts discovering available secrets dynamically
+//   - Rotation scripts enumerating secrets to process
+//   - Developers exploring vault contents in dev environments
+//
+// Tuning Notes:
+//   - ListThreshold: how many list operations in a window triggers
+//     the alert. Lower in production, higher in dev.
+//   - Distinguish between SecretList (all secrets) and SecretGet
+//     (specific secret) — List is always more suspicious
+// ============================================================
+
+let ListThreshold = 5;
+let TimeWindow    = 5m;
+
+AzureDiagnostics
+| where TimeGenerated >= ago(1d)
+| where ResourceType == "VAULTS"
+| where OperationName in ("SecretList", "KeyList", "CertificateList")
+| where ResultType == "Success"
+| summarize
+    ListCount         = count(),
+    OperationTypes    = make_set(OperationName, 5),
+    FirstList         = min(TimeGenerated),
+    LastList          = max(TimeGenerated)
+    by CallerIPAddress, identity_claim_upn_s, ResourceId, bin(TimeGenerated, TimeWindow)
+| where ListCount >= ListThreshold
+| project
+    TimeWindow        = TimeGenerated,
+    Caller            = identity_claim_upn_s,
+    VaultName         = ResourceId,
+    CallerIPAddress,
+    ListCount,
+    OperationTypes,
+    FirstList,
+    LastList
+| order by ListCount desc

@@ -1,0 +1,58 @@
+// ============================================================
+// Rule ID     : IM-001
+// Name        : Mass Resource Deletion
+// MITRE Tactic: Impact
+// MITRE Tech  : T1485 — Data Destruction
+// Data Source : AzureActivity
+// Severity    : CRITICAL
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects a high volume of resource deletion operations within
+//   a short time window by a single caller. Mass deletion is a
+//   strong indicator of either a ransomware/destructive attack
+//   or an insider threat scenario. The pattern of many deletes
+//   in quick succession is distinct from normal operational
+//   decommissioning, which is typically slower and more deliberate.
+//
+// False Positives:
+//   - Large-scale environment teardown (dev/test cleanup)
+//   - IaC destroy operations (terraform destroy)
+//   - Resource group deletion (which cascades to child resources)
+//
+// Tuning Notes:
+//   - DeletionThreshold: default 20 in 5 minutes is conservative.
+//     Terraform destroy can hit this in test environments.
+//   - Exclude known CI/CD service principals if they run destroy operations
+//   - Correlate with any preceding data access (EX-001/EX-002) —
+//     delete after exfiltration is the classic ransomware pattern
+// ============================================================
+
+let DeletionThreshold = 20;
+let TimeWindow        = 5m;
+
+AzureActivity
+| where TimeGenerated >= ago(1d)
+| where OperationNameValue endswith "/DELETE"
+| where ActivityStatusValue == "Success"
+| summarize
+    DeletionCount       = count(),
+    DistinctResourceTypes = dcount(ResourceProviderValue),
+    ResourceTypeList    = make_set(ResourceProviderValue, 10),
+    DeletedResources    = make_set(Resource, 20),
+    FirstDelete         = min(TimeGenerated),
+    LastDelete          = max(TimeGenerated)
+    by Caller, SubscriptionId, bin(TimeGenerated, TimeWindow)
+| where DeletionCount >= DeletionThreshold
+| project
+    TimeWindow          = TimeGenerated,
+    Caller,
+    SubscriptionId,
+    DeletionCount,
+    DistinctResourceTypes,
+    ResourceTypeList,
+    DeletedResources,
+    FirstDelete,
+    LastDelete
+| order by DeletionCount desc

@@ -1,0 +1,45 @@
+// ============================================================
+// Rule ID     : DE-004
+// Name        : Defender for Cloud Alert Suppression Rule Created
+// MITRE Tactic: Defense Evasion
+// MITRE Tech  : T1562.001 — Impair Defenses: Disable or Modify Tools
+// Data Source : AzureActivity
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a suppression rule is created in Microsoft
+//   Defender for Cloud. Suppression rules silence specific alert
+//   types for defined resources. An attacker who creates a
+//   suppression rule for their target resource type or for the
+//   specific alerts their activity generates can operate without
+//   triggering visible alerts in the security dashboard.
+//
+// False Positives:
+//   - SOC team suppressing known false positives
+//   - Security team configuring alert noise reduction
+//
+// Tuning Notes:
+//   - All suppression rule creations should be reviewed and
+//     approved via change management
+//   - Check what alert type and resource scope the suppression
+//     covers — overly broad suppressions are immediately suspicious
+//   - Correlate with other suspicious activity around the same time
+// ============================================================
+
+AzureActivity
+| where TimeGenerated >= ago(1d)
+| where OperationNameValue == "MICROSOFT.SECURITY/ALERTSSUPPRESSIONRULES/WRITE"
+| where ActivityStatusValue == "Success"
+| extend
+    SuppressionDetails = tostring(Properties)
+| project
+    TimeGenerated,
+    Caller,
+    ResourceGroup,
+    Resource,
+    SubscriptionId,
+    SuppressionDetails,
+    CorrelationId
+| order by TimeGenerated desc

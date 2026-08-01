@@ -1,0 +1,66 @@
+// ============================================================
+// Rule ID     : PS-001
+// Name        : Suspicious OAuth Application Consent
+// MITRE Tactic: Persistence
+// MITRE Tech  : T1098.003 — Account Manipulation: Additional Cloud Roles
+// Data Source : AuditLogs (Entra ID)
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a user grants consent to an OAuth application,
+//   particularly when the app requests sensitive permissions.
+//   OAuth phishing (illicit consent grant) is a common technique
+//   where an attacker tricks a user into authorising a malicious
+//   app that can then access their mailbox, files, or contacts
+//   persistently — surviving password resets.
+//
+// False Positives:
+//   - Legitimate third-party SaaS apps being onboarded
+//   - Developers registering new apps for testing
+//
+// Tuning Notes:
+//   - SensitiveScopes: extend this list with your org's sensitive
+//     permission set
+//   - UserConsent is higher risk than AdminConsent — admin consent
+//     goes through approval workflows, user consent often does not
+//   - If your org has disabled user consent entirely, any consent
+//     grant here from a non-admin is immediately suspicious
+//   - Cross-correlate ConsentedApp with threat intel IOC lists
+// ============================================================
+
+let SensitiveScopes = dynamic([
+    "Mail.Read",
+    "Mail.ReadWrite",
+    "Mail.Send",
+    "Contacts.Read",
+    "Files.Read.All",
+    "Files.ReadWrite.All",
+    "offline_access",
+    "User.Read.All",
+    "Group.ReadWrite.All",
+    "Directory.ReadWrite.All",
+    "MailboxSettings.ReadWrite"
+]);
+
+AuditLogs
+| where TimeGenerated >= ago(1d)
+| where OperationName == "Consent to application"
+| where Result == "success"
+| extend
+    ConsentedApp      = tostring(TargetResources[0].displayName),
+    ConsentedBy       = tostring(InitiatedBy.user.userPrincipalName),
+    ConsentType       = tostring(AdditionalDetails[0].value),
+    ScopesRaw         = tostring(AdditionalDetails[1].value)
+| where ScopesRaw has_any (SensitiveScopes)
+         or ConsentType == "AllPrincipals"          // admin consent on behalf of all users
+| project
+    TimeGenerated,
+    ConsentedApp,
+    ConsentedBy,
+    ConsentType,
+    ScopesRaw,
+    Result,
+    CorrelationId
+| order by TimeGenerated desc

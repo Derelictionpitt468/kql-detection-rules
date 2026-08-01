@@ -1,0 +1,65 @@
+// ============================================================
+// Rule ID     : IA-002
+// Name        : Sign-in from New Country
+// MITRE Tactic: Initial Access
+// MITRE Tech  : T1078 — Valid Accounts
+// Data Source : SigninLogs (Entra ID)
+// Severity    : MEDIUM
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a user successfully authenticates from a country
+//   they have never signed in from before, based on historical
+//   baseline. Weaker signal than impossible travel but useful for
+//   detecting compromised accounts used by overseas attackers
+//   across different sessions.
+//
+// False Positives:
+//   - User on international travel
+//   - VPN exit node in a foreign country
+//   - Relocation without HR notification
+//
+// Tuning Notes:
+//   - Extend LookbackDays for a stronger baseline
+//   - Add a country allowlist for commonly used VPN countries
+//   - Combine with other signals (new device, unusual time) for
+//     higher confidence alerting
+// ============================================================
+
+let LookbackDays    = 30d;
+let DetectionWindow = 1d;
+
+let HistoricalCountries =
+    SigninLogs
+    | where TimeGenerated between (ago(LookbackDays) .. ago(DetectionWindow))
+    | where ResultType == "0"
+    | where isnotempty(Location)
+    | project
+        UserPrincipalName,
+        CountryOrRegion = tostring(LocationDetails.countryOrRegion);
+
+let RecentSignins =
+    SigninLogs
+    | where TimeGenerated >= ago(DetectionWindow)
+    | where ResultType == "0"
+    | where isnotempty(Location)
+    | project
+        TimeGenerated,
+        UserPrincipalName,
+        IPAddress,
+        CountryOrRegion = tostring(LocationDetails.countryOrRegion),
+        City            = tostring(LocationDetails.city),
+        AppDisplayName;
+
+RecentSignins
+| join kind=leftanti HistoricalCountries
+    on UserPrincipalName, CountryOrRegion
+| project
+    TimeGenerated,
+    UserPrincipalName,
+    NewCountry        = CountryOrRegion,
+    City,
+    IPAddress,
+    AppDisplayName
+| order by TimeGenerated desc

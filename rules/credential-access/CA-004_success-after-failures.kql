@@ -1,0 +1,68 @@
+// ============================================================
+// Rule ID     : CA-004
+// Name        : Successful Sign-in After Multiple Failures
+// MITRE Tactic: Credential Access
+// MITRE Tech  : T1110.001 — Brute Force: Password Guessing
+// Data Source : SigninLogs (Entra ID)
+// Severity    : CRITICAL
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects a successful authentication that follows multiple
+//   recent failures for the same account. This is a high-confidence
+//   signal that a brute force or credential stuffing attack
+//   actually succeeded — not just that it was attempted.
+//
+// False Positives:
+//   - User genuinely forgetting their password and then resetting
+//   - Shared accounts where multiple users attempt login
+//
+// Tuning Notes:
+//   - FailureThreshold: minimum failures before the success matters
+//   - LookbackWindow: how far back to look for failures
+//   - Cross-correlate with impossible travel (IA-001) — if the
+//     successful sign-in comes from a new geo, severity is CRITICAL
+//   - Pay particular attention to admin accounts
+// ============================================================
+
+let FailureThreshold = 5;
+let LookbackWindow   = 30m;
+
+let Failures =
+    SigninLogs
+    | where TimeGenerated >= ago(2h)
+    | where ResultType != "0"
+    | where ResultType in ("50126", "50053", "50055", "50074", "50076")
+    | summarize
+        FailureCount  = count(),
+        LastFailure   = max(TimeGenerated),
+        FailureIPs    = make_set(IPAddress, 10)
+        by UserPrincipalName;
+
+let Successes =
+    SigninLogs
+    | where TimeGenerated >= ago(1h)
+    | where ResultType == "0"
+    | project
+        SuccessTime   = TimeGenerated,
+        UserPrincipalName,
+        IPAddress,
+        Location,
+        AppDisplayName,
+        UserAgent;
+
+Successes
+| join kind=inner Failures on UserPrincipalName
+| where FailureCount >= FailureThreshold
+| where SuccessTime > LastFailure
+| project
+    SuccessTime,
+    UserPrincipalName,
+    SuccessIP         = IPAddress,
+    SuccessLocation   = Location,
+    AppDisplayName,
+    FailureCount,
+    LastFailure,
+    FailureIPs
+| order by FailureCount desc

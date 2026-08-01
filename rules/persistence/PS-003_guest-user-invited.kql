@@ -1,0 +1,47 @@
+// ============================================================
+// Rule ID     : PS-003
+// Name        : Guest User Invited to Tenant
+// MITRE Tactic: Persistence
+// MITRE Tech  : T1136 — Create Account
+// Data Source : AuditLogs (Entra ID)
+// Severity    : LOW
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a guest user (B2B invite) is added to the Entra
+//   ID tenant. Attackers with sufficient admin privileges may
+//   invite external accounts they control as guest users to
+//   maintain persistent access to the tenant even after their
+//   primary compromised account is remediated.
+//
+// False Positives:
+//   - Legitimate partner or vendor onboarding
+//   - Contractors being given temporary tenant access
+//
+// Tuning Notes:
+//   - Raise severity if the inviting account is not in an
+//     approved HR or IT admin group
+//   - Monitor for guests invited AND immediately assigned roles
+//     (correlate with PE-003)
+//   - Bulk invitations in a short window are particularly suspicious
+// ============================================================
+
+AuditLogs
+| where TimeGenerated >= ago(1d)
+| where OperationName == "Invite external user"
+    or OperationName == "Add user"
+| where Result == "success"
+| extend
+    InvitedUser       = tostring(TargetResources[0].userPrincipalName),
+    InvitedBy         = tostring(InitiatedBy.user.userPrincipalName),
+    UserType          = tostring(TargetResources[0].type)
+| where InvitedUser contains "#EXT#" or UserType == "Guest"
+| project
+    TimeGenerated,
+    InvitedUser,
+    InvitedBy,
+    UserType,
+    Result,
+    CorrelationId
+| order by TimeGenerated desc

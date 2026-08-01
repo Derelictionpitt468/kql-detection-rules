@@ -1,0 +1,67 @@
+// ============================================================
+// Rule ID     : IA-001
+// Name        : Impossible Travel
+// MITRE Tactic: Initial Access
+// MITRE Tech  : T1078 — Valid Accounts
+// Data Source : SigninLogs (Entra ID)
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a user authenticates from two geographically
+//   distant locations within a time window that makes physical
+//   travel impossible. Classic indicator of credential compromise
+//   where the attacker is in a different country from the victim.
+//
+// False Positives:
+//   - VPN or Tor exit nodes in foreign countries
+//   - Corporate proxy routing through a different country
+//   - Legitimate travel (though time window makes this rare)
+//   - Cloud desktops or VM-based browsing
+//
+// Tuning Notes:
+//   - Default time window: 1 hour. Adjust based on tolerance.
+//   - CountryThreshold: only fires when countries differ
+//   - Consider maintaining an allowlist of known VPN countries
+//   - Entra ID Identity Protection has a built-in version of this
+//     but this KQL version gives you full control and visibility
+// ============================================================
+
+let TimeWindow = 1h;
+
+SigninLogs
+| where TimeGenerated >= ago(1d)
+| where ResultType == "0"
+| where isnotempty(Location)
+| project
+    TimeGenerated,
+    UserPrincipalName,
+    IPAddress,
+    Location,
+    CountryOrRegion   = tostring(LocationDetails.countryOrRegion),
+    City              = tostring(LocationDetails.city),
+    AppDisplayName
+| order by UserPrincipalName asc, TimeGenerated asc
+| serialize
+| extend
+    PrevTime          = prev(TimeGenerated, 1),
+    PrevCountry       = prev(CountryOrRegion, 1),
+    PrevCity          = prev(City, 1),
+    PrevIP            = prev(IPAddress, 1),
+    PrevUser          = prev(UserPrincipalName, 1)
+| where UserPrincipalName == PrevUser
+| where CountryOrRegion != PrevCountry
+| where (TimeGenerated - PrevTime) <= TimeWindow
+| project
+    TimeGenerated,
+    UserPrincipalName,
+    CurrentCountry    = CountryOrRegion,
+    CurrentCity       = City,
+    CurrentIP         = IPAddress,
+    PreviousCountry   = PrevCountry,
+    PreviousCity      = PrevCity,
+    PreviousIP        = PrevIP,
+    TimeDelta         = TimeGenerated - PrevTime,
+    AppDisplayName
+| order by TimeGenerated desc

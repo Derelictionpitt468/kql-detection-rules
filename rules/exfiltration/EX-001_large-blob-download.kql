@@ -1,0 +1,62 @@
+// ============================================================
+// Rule ID     : EX-001
+// Name        : Large Blob Download / Data Exfiltration Signal
+// MITRE Tactic: Exfiltration
+// MITRE Tech  : T1530 — Data from Cloud Storage Object
+// Data Source : StorageBlobLogs
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects unusually large data downloads from Azure Blob Storage
+//   by a single caller within a short time window. Large-volume
+//   reads are a strong exfiltration signal, particularly when
+//   they originate from an external IP or an identity that does
+//   not normally access that storage account.
+//
+// Prerequisites:
+//   Storage account diagnostic logging must be enabled with the
+//   StorageRead category directed to Log Analytics.
+//
+// False Positives:
+//   - Legitimate bulk data export for reporting or ETL
+//   - Backup jobs reading from storage
+//   - Data migration operations
+//
+// Tuning Notes:
+//   - SizethresholdBytes: default 1 GB, adjust per environment
+//   - Exclude known backup service principals and internal IPs
+//   - Cross-reference CallerIpAddress with known corporate IP ranges
+//   - Combine with EX-002 (bulk read count) for higher confidence
+// ============================================================
+
+let SizeThresholdBytes = 1073741824;  // 1 GB
+let TimeWindow         = 1h;
+
+StorageBlobLogs
+| where TimeGenerated >= ago(1d)
+| where OperationName == "GetBlob"
+| where ResponseBodySize > 0
+| summarize
+    TotalBytesRead    = sum(ResponseBodySize),
+    ReadCount         = count(),
+    DistinctBlobs     = dcount(ObjectKey),
+    FirstRead         = min(TimeGenerated),
+    LastRead          = max(TimeGenerated),
+    BlobSamples       = make_set(ObjectKey, 5)
+    by CallerIpAddress, AccountName, bin(TimeGenerated, TimeWindow)
+| where TotalBytesRead >= SizeThresholdBytes
+| extend TotalGB = round(TotalBytesRead / 1073741824.0, 2)
+| project
+    TimeWindow        = TimeGenerated,
+    AccountName,
+    CallerIpAddress,
+    TotalGB,
+    TotalBytesRead,
+    ReadCount,
+    DistinctBlobs,
+    BlobSamples,
+    FirstRead,
+    LastRead
+| order by TotalGB desc

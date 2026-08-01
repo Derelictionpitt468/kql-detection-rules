@@ -1,0 +1,55 @@
+// ============================================================
+// Rule ID     : PS-004
+// Name        : App Registration Redirect URI Modified
+// MITRE Tactic: Persistence
+// MITRE Tech  : T1098 — Account Manipulation
+// Data Source : AuditLogs (Entra ID)
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a redirect URI on an existing app registration
+//   is added or modified. Attackers with Application.ReadWrite
+//   permissions can add a malicious redirect URI to a trusted
+//   app, then use that app in a phishing campaign — because users
+//   see the trusted app's name during the OAuth consent flow,
+//   not the attacker's URI.
+//
+// False Positives:
+//   - Legitimate developers updating app redirect URIs during
+//     development or environment changes
+//   - DevOps pipelines updating app configurations
+//
+// Tuning Notes:
+//   - ModifiedTo field: look for external domains, localhost with
+//     unusual ports, or unknown redirect targets
+//   - Cross-correlate with PS-001 — redirect URI changes followed
+//     by new consent grants are a strong combined signal
+//   - High-trust apps (Microsoft 365, Azure Portal) should have
+//     change control — any redirect URI modification is alertable
+// ============================================================
+
+AuditLogs
+| where TimeGenerated >= ago(1d)
+| where OperationName == "Update application"
+| where Result == "success"
+| extend
+    AppName           = tostring(TargetResources[0].displayName),
+    AppId             = tostring(TargetResources[0].id),
+    ModifiedBy        = tostring(InitiatedBy.user.userPrincipalName),
+    ModifiedByApp     = tostring(InitiatedBy.app.displayName),
+    ModifiedProps     = tostring(TargetResources[0].modifiedProperties)
+| where ModifiedProps contains "ReplyUrl"
+       or ModifiedProps contains "RedirectUri"
+| extend
+    NewRedirectURI    = extract('"newValue":"([^"]+)"', 1, ModifiedProps)
+| project
+    TimeGenerated,
+    AppName,
+    AppId,
+    ModifiedBy,
+    ModifiedByApp,
+    NewRedirectURI,
+    CorrelationId
+| order by TimeGenerated desc

@@ -1,0 +1,64 @@
+// ============================================================
+// Rule ID     : EC-001
+// Name        : VM Extension Silently Installed
+// MITRE Tactic: Execution
+// MITRE Tech  : T1059 — Command and Scripting Interpreter
+// Data Source : AzureActivity
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a VM extension is installed on a running virtual
+//   machine. VM extensions execute code directly on the VM at the
+//   hypervisor level — they bypass the OS security controls and
+//   run as SYSTEM/root. Attackers with Contributor or VM
+//   Contributor RBAC access can install extensions without any
+//   interaction from the VM's users or local admins, making this
+//   a powerful and stealthy code execution vector.
+//
+//   High-risk extensions to watch for:
+//   - CustomScriptExtension / CustomScript — runs arbitrary scripts
+//   - RunCommandHandler — Microsoft's own remote execution mechanism
+//   - Any extension not in your approved list
+//
+// False Positives:
+//   - Legitimate extension deployment via IaC or configuration management
+//   - Azure Monitor Agent or MDE onboarding extensions
+//   - Antimalware extension deployments (IaaSAntimalware)
+//
+// Tuning Notes:
+//   - Build an ApprovedExtensions allowlist specific to your environment
+//   - Flag any CustomScriptExtension installation regardless of source
+//     as it can execute arbitrary code
+//   - Correlate the Caller identity with PE-001/PE-003 findings
+// ============================================================
+
+let ApprovedExtensions = dynamic([
+    "MicrosoftMonitoringAgent",
+    "OmsAgentForLinux",
+    "AzureMonitorWindowsAgent",
+    "AzureMonitorLinuxAgent",
+    "MDE.Windows",
+    "MDE.Linux",
+    "IaaSAntimalware"
+]);
+
+AzureActivity
+| where TimeGenerated >= ago(1d)
+| where OperationNameValue == "MICROSOFT.COMPUTE/VIRTUALMACHINES/EXTENSIONS/WRITE"
+| where ActivityStatusValue == "Success"
+| extend
+    ExtensionName     = tostring(split(ResourceId, "/")[-1]),
+    VMName            = tostring(split(ResourceId, "/")[-3])
+| where ExtensionName !in (ApprovedExtensions)
+| project
+    TimeGenerated,
+    Caller,
+    VMName,
+    ExtensionName,
+    ResourceGroup,
+    SubscriptionId,
+    ResourceId,
+    CorrelationId
+| order by TimeGenerated desc

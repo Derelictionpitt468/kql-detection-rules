@@ -1,0 +1,61 @@
+// ============================================================
+// Rule ID     : LM-001
+// Name        : Unusual Service Principal Sign-in Activity
+// MITRE Tactic: Lateral Movement
+// MITRE Tech  : T1078.004 — Valid Accounts: Cloud Accounts
+// Data Source : AADServicePrincipalSignInLogs
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects service principals authenticating from IP addresses
+//   or resource contexts they have not historically used. Service
+//   principals have fixed, predictable behaviour — when their
+//   sign-in pattern changes, it typically indicates credential
+//   theft and misuse by an attacker for lateral movement.
+//
+// False Positives:
+//   - SP credentials rotated and used from a new deployment
+//   - Infrastructure migration to a new IP range
+//   - New Azure region deployment
+//
+// Tuning Notes:
+//   - LookbackDays: baseline window for "normal" SP behaviour
+//   - Exclude known automation IPs using a reference table
+//   - Focus on SPs with high RBAC permissions — cross-reference
+//     with AZ-006 findings from the auditor
+// ============================================================
+
+let LookbackDays    = 30d;
+let DetectionWindow = 1d;
+
+let HistoricalIPs =
+    AADServicePrincipalSignInLogs
+    | where TimeGenerated between (ago(LookbackDays) .. ago(DetectionWindow))
+    | where ResultType == "0"
+    | project ServicePrincipalId, ServicePrincipalName, IPAddress;
+
+let RecentActivity =
+    AADServicePrincipalSignInLogs
+    | where TimeGenerated >= ago(DetectionWindow)
+    | where ResultType == "0"
+    | project
+        TimeGenerated,
+        ServicePrincipalId,
+        ServicePrincipalName,
+        IPAddress,
+        Location,
+        ResourceDisplayName;
+
+RecentActivity
+| join kind=leftanti HistoricalIPs
+    on ServicePrincipalId, IPAddress
+| project
+    TimeGenerated,
+    ServicePrincipalName,
+    ServicePrincipalId,
+    NewIPAddress      = IPAddress,
+    Location,
+    ResourceDisplayName
+| order by TimeGenerated desc

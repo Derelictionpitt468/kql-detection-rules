@@ -1,0 +1,52 @@
+// ============================================================
+// Rule ID     : PE-001
+// Name        : New Owner Role Assignment at Subscription Scope
+// MITRE Tactic: Privilege Escalation
+// MITRE Tech  : T1098.003 — Account Manipulation: Additional Cloud Roles
+// Data Source : AuditLogs (Entra ID) / AzureActivity
+// Severity    : CRITICAL
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when the Owner role is assigned to any principal at
+//   the subscription or management group scope via Azure RBAC.
+//   Owner assignment grants full control over all Azure resources
+//   and is one of the highest-impact changes in an Azure environment.
+//   This should be extremely rare in production.
+//
+// False Positives:
+//   - Legitimate onboarding of a new platform administrator
+//   - Break-glass account setup
+//   - Terraform or IaC creating service principals with Owner
+//
+// Tuning Notes:
+//   - Owner role definition ID: 8e3af657-a8ff-443c-a75c-2fe8c4bcb635
+//   - Filter to subscription scope only: scope contains "/subscriptions/"
+//     and does NOT contain "/resourceGroups/"
+//   - Create an allowlist of known automation service principals
+//     that legitimately receive this role during deployments
+// ============================================================
+
+let OwnerRoleId = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635";
+
+AzureActivity
+| where TimeGenerated >= ago(1d)
+| where OperationNameValue == "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE"
+| where ActivityStatusValue == "Success"
+| extend
+    RoleDefinitionId  = tostring(parse_json(tostring(parse_json(Properties).requestBody)).roleDefinitionId),
+    PrincipalId       = tostring(parse_json(tostring(parse_json(Properties).requestBody)).principalId),
+    Scope             = tostring(parse_json(Properties).scope)
+| where RoleDefinitionId contains OwnerRoleId
+| where Scope matches regex @"^/subscriptions/[^/]+$"   // subscription-level only
+| project
+    TimeGenerated,
+    Caller,
+    PrincipalId,
+    Scope,
+    RoleDefinitionId,
+    ResourceGroup,
+    SubscriptionId,
+    CorrelationId
+| order by TimeGenerated desc

@@ -1,0 +1,68 @@
+// ============================================================
+// Rule ID     : CA-006
+// Name        : Legacy Authentication Protocol Used
+// MITRE Tactic: Credential Access
+// MITRE Tech  : T1078 — Valid Accounts
+// Data Source : SigninLogs (Entra ID)
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects successful authentications using legacy protocols
+//   (Basic Auth, SMTP AUTH, IMAP, POP3, MAPI) that bypass
+//   Conditional Access and MFA entirely. Attackers deliberately
+//   target legacy auth endpoints when modern auth is enforced
+//   elsewhere, as these protocols only require a username and
+//   password and cannot be blocked by MFA policies.
+//
+// False Positives:
+//   - Legacy mail clients (old Outlook, mobile apps not updated)
+//   - Shared mailbox access via older scripts
+//   - Printer/scanner "scan to email" using SMTP AUTH
+//
+// Tuning Notes:
+//   - If your org has blocked legacy auth via Conditional Access,
+//     any successful sign-in here is highly suspicious
+//   - ClientAppUsed field identifies the legacy protocol
+//   - Priority investigate admin or privileged accounts
+//   - ResultType == "0" means the legacy auth SUCCEEDED
+// ============================================================
+
+let LegacyProtocols = dynamic([
+    "Authenticated SMTP",
+    "Autodiscover",
+    "Exchange ActiveSync",
+    "IMAP4",
+    "MAPI Over HTTP",
+    "OAB",
+    "Outlook Anywhere",
+    "POP3",
+    "Reporting Web Services",
+    "Other clients",
+    "Exchange Web Services"
+]);
+
+SigninLogs
+| where TimeGenerated >= ago(1d)
+| where ResultType == "0"                          // successful sign-ins only
+| where ClientAppUsed in (LegacyProtocols)
+| summarize
+    Count             = count(),
+    FirstSeen         = min(TimeGenerated),
+    LastSeen          = max(TimeGenerated),
+    DistinctIPs       = dcount(IPAddress),
+    IPList            = make_set(IPAddress, 10),
+    ProtocolList      = make_set(ClientAppUsed, 5),
+    Locations         = make_set(Location, 5)
+    by UserPrincipalName
+| project
+    UserPrincipalName,
+    Count,
+    ProtocolList,
+    DistinctIPs,
+    IPList,
+    Locations,
+    FirstSeen,
+    LastSeen
+| order by Count desc

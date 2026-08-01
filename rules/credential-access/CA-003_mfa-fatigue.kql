@@ -1,0 +1,57 @@
+// ============================================================
+// Rule ID     : CA-003
+// Name        : MFA Fatigue / Push Flooding
+// MITRE Tactic: Credential Access
+// MITRE Tech  : T1621 — Multi-Factor Authentication Request Generation
+// Data Source : SigninLogs (Entra ID)
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects MFA fatigue attacks where an attacker who has valid
+//   credentials repeatedly triggers MFA push notifications to
+//   overwhelm the user into approving one accidentally.
+//   Signals are: many MFA requests for one user in a short window
+//   where the authentication method involves a push notification.
+//
+// False Positives:
+//   - User genuinely struggling with MFA app
+//   - Misconfigured app looping through authentication
+//
+// Tuning Notes:
+//   - ResultType 500121 = auth failed during strong auth step
+//   - AuthenticationRequirement = multiFactorAuthentication
+//   - Adjust MFARequestThreshold to reduce noise
+//   - High-value accounts (admins) should have a lower threshold
+// ============================================================
+
+let MFARequestThreshold = 5;
+let TimeWindow = 10m;
+
+SigninLogs
+| where TimeGenerated >= ago(1h)
+| where AuthenticationRequirement == "multiFactorAuthentication"
+| where ResultType != "0"
+| where ResultType in ("500121", "50074", "50076")
+| summarize
+    MFAFailureCount   = count(),
+    FirstAttempt      = min(TimeGenerated),
+    LastAttempt       = max(TimeGenerated),
+    DistinctIPs       = dcount(IPAddress),
+    IPList            = make_set(IPAddress, 10),
+    AppList           = make_set(AppDisplayName, 5),
+    Locations         = make_set(Location, 5)
+    by UserPrincipalName, bin(TimeGenerated, TimeWindow)
+| where MFAFailureCount >= MFARequestThreshold
+| project
+    TimeWindow        = TimeGenerated,
+    UserPrincipalName,
+    MFAFailureCount,
+    DistinctIPs,
+    IPList,
+    AppList,
+    Locations,
+    FirstAttempt,
+    LastAttempt
+| order by MFAFailureCount desc

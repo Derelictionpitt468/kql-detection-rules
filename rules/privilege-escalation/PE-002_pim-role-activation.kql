@@ -1,0 +1,58 @@
+// ============================================================
+// Rule ID     : PE-002
+// Name        : PIM Privileged Role Activation
+// MITRE Tactic: Privilege Escalation
+// MITRE Tech  : T1098.003 — Account Manipulation: Additional Cloud Roles
+// Data Source : AuditLogs (Entra ID)
+// Severity    : MEDIUM
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a user activates a privileged role via Entra ID
+//   Privileged Identity Management (PIM). While PIM activations
+//   are expected in environments that use PIM, they should be
+//   monitored for unusual patterns — unexpected users, unusual
+//   times, or high-sensitivity roles activated outside change windows.
+//
+// False Positives:
+//   - Legitimate admins activating roles for planned work
+//   - Automated scripts using PIM APIs
+//
+// Tuning Notes:
+//   - Filter to high-sensitivity roles only (Global Admin,
+//     Privileged Role Admin, Security Admin) for lower noise
+//   - AlertOnHighSensitivityOnly: uncomment the role filter below
+//   - Cross-correlate with sign-in logs to verify the activating
+//     user's sign-in was from a trusted IP and device
+// ============================================================
+
+let HighSensitivityRoles = dynamic([
+    "Global Administrator",
+    "Privileged Role Administrator",
+    "Security Administrator",
+    "Exchange Administrator",
+    "SharePoint Administrator",
+    "User Access Administrator",
+    "Application Administrator"
+]);
+
+AuditLogs
+| where TimeGenerated >= ago(1d)
+| where OperationName == "Add member to role completed (PIM activation)"
+    or OperationName contains "PIM" and OperationName contains "activated"
+| extend
+    ActivatedRole     = tostring(TargetResources[0].displayName),
+    ActivatedBy       = tostring(InitiatedBy.user.userPrincipalName),
+    TargetUser        = tostring(TargetResources[1].userPrincipalName),
+    JustificationRaw  = tostring(AdditionalDetails)
+| where ActivatedRole in (HighSensitivityRoles)     // remove this line to catch all roles
+| project
+    TimeGenerated,
+    ActivatedRole,
+    ActivatedBy,
+    TargetUser,
+    Result,
+    JustificationRaw,
+    CorrelationId
+| order by TimeGenerated desc

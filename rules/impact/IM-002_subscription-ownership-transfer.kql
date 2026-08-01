@@ -1,0 +1,51 @@
+// ============================================================
+// Rule ID     : IM-002
+// Name        : Subscription Ownership Transfer or Move
+// MITRE Tactic: Impact
+// MITRE Tech  : T1098 — Account Manipulation
+// Data Source : AzureActivity
+// Severity    : CRITICAL
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when an Azure subscription is transferred to a
+//   different billing account or management group, or when the
+//   subscription ownership changes. A subscription transfer is
+//   an extremely high-impact event — if an attacker transfers a
+//   subscription to an account they control, they gain full
+//   ownership of all resources within it, potentially permanently.
+//   This should essentially never happen without prior change
+//   management approval.
+//
+// False Positives:
+//   - Legitimate corporate restructuring
+//   - Mergers / acquisitions
+//   - Moving subscriptions between management groups as part of
+//     a planned organisational hierarchy change
+//
+// Tuning Notes:
+//   - Any hit on this rule in production should trigger immediate
+//     incident response — this is a P1 event
+//   - Correlate with any preceding privilege escalation signals
+//   - If an unknown external account appears as the new owner,
+//     treat as active incident
+// ============================================================
+
+AzureActivity
+| where TimeGenerated >= ago(7d)          // longer window — this is rare enough to look back further
+| where OperationNameValue in (
+    "MICROSOFT.SUBSCRIPTION/SUBSCRIPTIONS/TRANSFER/ACTION",
+    "MICROSOFT.BILLING/BILLINGACCOUNTS/BILLINGPROFILES/INVOICESECTIONS/TRANSFER/ACTION",
+    "MICROSOFT.MANAGEMENT/MANAGEMENTGROUPS/SUBSCRIPTIONS/WRITE"
+  )
+| where ActivityStatusValue == "Success"
+| project
+    TimeGenerated,
+    Caller,
+    OperationNameValue,
+    SubscriptionId,
+    ResourceGroup,
+    Properties,
+    CorrelationId
+| order by TimeGenerated desc

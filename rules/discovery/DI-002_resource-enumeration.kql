@@ -1,0 +1,60 @@
+// ============================================================
+// Rule ID     : DI-002
+// Name        : Excessive Azure Resource Enumeration
+// MITRE Tactic: Discovery
+// MITRE Tech  : T1526 — Cloud Service Discovery
+// Data Source : AzureActivity
+// Severity    : MEDIUM
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects a high volume of resource read (list/get) operations
+//   from a single identity in a short time window. Attackers who
+//   gain initial access to a subscription will systematically
+//   enumerate available resources to understand the environment —
+//   what VMs exist, what storage accounts, what Key Vaults, what
+//   databases — before pivoting or exfiltrating.
+//
+// False Positives:
+//   - Infrastructure scanning / inventory tools (e.g., Prisma Cloud,
+//     Defender for Cloud, Azure Resource Graph queries)
+//   - Terraform/Pulumi plan operations reading current state
+//   - New admin doing environment discovery legitimately
+//
+// Tuning Notes:
+//   - ReadThreshold: tune based on normal management activity volume
+//   - DistinctResourceTypes: high value = broad reconnaissance
+//   - Exclude known scanner service principals by SPId or UPN suffix
+// ============================================================
+
+let ReadThreshold        = 100;
+let TimeWindow           = 10m;
+let DistinctTypeThreshold = 5;
+
+AzureActivity
+| where TimeGenerated >= ago(1d)
+| where OperationNameValue endswith "/READ"
+       or OperationNameValue endswith "/LIST"
+| where ActivityStatusValue == "Success"
+| summarize
+    ReadCount            = count(),
+    DistinctResourceTypes = dcount(ResourceProviderValue),
+    ResourceTypeList     = make_set(ResourceProviderValue, 15),
+    DistinctResources    = dcount(Resource),
+    FirstRead            = min(TimeGenerated),
+    LastRead             = max(TimeGenerated)
+    by Caller, SubscriptionId, bin(TimeGenerated, TimeWindow)
+| where ReadCount >= ReadThreshold
+       and DistinctResourceTypes >= DistinctTypeThreshold
+| project
+    TimeWindow           = TimeGenerated,
+    Caller,
+    SubscriptionId,
+    ReadCount,
+    DistinctResourceTypes,
+    ResourceTypeList,
+    DistinctResources,
+    FirstRead,
+    LastRead
+| order by ReadCount desc

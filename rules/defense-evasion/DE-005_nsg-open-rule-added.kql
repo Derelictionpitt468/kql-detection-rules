@@ -1,0 +1,47 @@
+// ============================================================
+// Rule ID     : DE-005
+// Name        : NSG Open Inbound Rule Added via Azure Activity
+// MITRE Tactic: Defense Evasion / Initial Access
+// MITRE Tech  : T1562.007 — Impair Defenses: Disable or Modify Cloud Firewall
+// Data Source : AzureActivity
+// Severity    : HIGH
+// Author      : Neel Kotnis
+// ============================================================
+//
+// Description:
+//   Detects when a Network Security Group rule is created or
+//   modified to allow inbound traffic from any source (0.0.0.0/0).
+//   While the Azure Auditor (AZ-003) detects the configuration state,
+//   this rule detects the change event in real time — catching the
+//   moment the firewall is opened, not just that it is open.
+//
+// False Positives:
+//   - Developers opening ports for temporary testing
+//   - Infrastructure provisioning scripts
+//
+// Tuning Notes:
+//   - Properties.requestBody contains the rule details including
+//     sourceAddressPrefix — parse this to confirm it is 0.0.0.0/0
+//   - Cross-correlate the Caller with recent sign-in events to
+//     verify the identity making the change
+//   - Particularly high severity if the port is 3389 (RDP) or 22 (SSH)
+// ============================================================
+
+AzureActivity
+| where TimeGenerated >= ago(1d)
+| where OperationNameValue == "MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/SECURITYRULES/WRITE"
+| where ActivityStatusValue == "Success"
+| extend
+    RequestBody       = tostring(parse_json(Properties).requestBody)
+| where RequestBody contains "0.0.0.0/0"
+       or RequestBody contains '"sourceAddressPrefix":"*"'
+       or RequestBody contains '"sourceAddressPrefix":"Internet"'
+| project
+    TimeGenerated,
+    Caller,
+    Resource,
+    ResourceGroup,
+    SubscriptionId,
+    RequestBody,
+    CorrelationId
+| order by TimeGenerated desc
