@@ -143,5 +143,5 @@ Every `.kql` file follows a consistent header format:
 
 ## Related Projects
 
-- [azure-security-auditor](https://github.com/neelkotnis/azure-security-auditor) — CLI tool to audit Azure security posture (RBAC, NSGs, storage, identity, compute, encryption, monitoring)
-- [aws-iam-security-auditor](https://github.com/neelkotnis/aws-iam-security-auditor) — CLI tool to audit AWS IAM security configurations
+- [azure-security-auditor](https://derelictionpitt468.github.io) — CLI tool to audit Azure security posture (RBAC, NSGs, storage, identity, compute, encryption, monitoring)
+- [aws-iam-security-auditor](https://derelictionpitt468.github.io) — CLI tool to audit AWS IAM security configurations
